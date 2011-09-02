@@ -4,6 +4,7 @@ from queryset import DO_NOTHING
 from document import Document, EmbeddedDocument
 from connection import _get_db
 from operator import itemgetter
+from queryset import DoesNotExist
 
 import re
 import pymongo
@@ -619,6 +620,9 @@ class ReferenceField(BaseField):
             value = _get_db().dereference(value)
             if value is not None:
                 instance._data[self.name] = self.document_type._from_son(value)
+            else:
+                raise DoesNotExist("DBRef for collection %s ID %s cannot be dereferenced" %
+                                   (value.collection, str(value.id)))
 
         return super(ReferenceField, self).__get__(instance, owner)
 
