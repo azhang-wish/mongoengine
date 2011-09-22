@@ -136,12 +136,37 @@ class BaseField(object):
         """
         pass
 
+    @property
+    def tuple_choices(self):
+        """
+            If the first element of the choices list is not a tuple, assume
+            we're not doing the key/value tuple thing for choices
+
+            adam - I don't like the way the tuple choices thing looks, so I'm
+                   choosing to remove it in our mongoengine fork
+        """
+        if len(self.choices) == 0:
+            return False
+
+        return isinstance(self.choices[0], tuple)
+
     def _validate(self, value):
         # check choices
-        if self.choices is not None:
-            option_keys = [option_key for option_key, option_value in self.choices]
-            if value not in option_keys:
-                raise ValidationError("Value must be one of %s." % unicode(option_keys))
+        if self.choices is not None and isinstance(self.choices, list):
+            # if there are no choices, you're screwed (ideally won't happen)
+            if len(self.choices) == 0:
+                if value is not None:
+                    raise ValidationError("Choices are empty for this field and you have specified a value")
+
+            # if there are choices, look at the first one to see if we're in tuple mode or not
+            else:
+                if isinstance(self.choices[0], tuple):
+                    option_keys = [option_key for option_key, option_value in self.choices]
+                else:
+                    option_keys = self.choices
+
+                if value not in option_keys:
+                    raise ValidationError("Value must be one of %s." % unicode(option_keys))
 
         # check validation argument
         if self.validation is not None:
@@ -835,7 +860,7 @@ class BaseDocument(object):
 
     def __getstate__(self):
         self_dict = self.__dict__
-        removals = ["get_%s_display" % k for k,v in self._fields.items() if v.choices]
+        removals = ["get_%s_display" % k for k,v in self._fields.items() if v.choices and v.tuple_choices]
         for k in removals:
             if hasattr(self, k):
                 delattr(self, k)
@@ -847,13 +872,17 @@ class BaseDocument(object):
 
     def __set_field_display(self):
         for attr_name, field in self._fields.items():
-            if field.choices:  # dynamically adds a way to get the display value for a field with choices
+            if field.choices and field.tuple_choices:  # dynamically adds a way to get the display value for a field with choices
                 setattr(self, 'get_%s_display' % attr_name, partial(self.__get_field_display, field=field))
 
     def __get_field_display(self, field):
         """Returns the display value for a choice field"""
         value = getattr(self, field.name)
-        return dict(field.choices).get(value, value)
+
+        if field.tuple_choices:
+            return dict(field.choices).get(value, value)
+        else:
+            return value
 
     def __iter__(self):
         return iter(self._fields)
