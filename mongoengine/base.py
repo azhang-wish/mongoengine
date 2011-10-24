@@ -405,12 +405,21 @@ class DocumentMetaclass(type):
         attrs['_superclasses'] = superclasses
 
         # Add the document's fields to the _fields attribute
+        field_names = set()
         for attr_name, attr_value in attrs.items():
             if hasattr(attr_value, "__class__") and \
                issubclass(attr_value.__class__, BaseField):
                 attr_value.name = attr_name
                 if not attr_value.db_field:
                     attr_value.db_field = attr_name
+                    field_name = attr_name
+                else:
+                    field_name = attr_value.db_field
+
+                # a sanity check
+                assert field_name not in field_names, "Field %s already exists in %s!" % (field_name, doc_class_name)
+                field_names.add(field_name)
+
                 doc_fields[attr_name] = attr_value
         attrs['_fields'] = doc_fields
         attrs['_db_field_map'] = dict([(k, v.db_field) for k, v in doc_fields.items() if k!=v.db_field])
