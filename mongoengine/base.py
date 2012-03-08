@@ -1,6 +1,6 @@
 import warnings
 
-from queryset import QuerySet, QuerySetManager
+from queryset import QuerySet, QuerySetManager, DO_NOTHING
 from queryset import DoesNotExist, MultipleObjectsReturned
 
 from mongoengine import signals
@@ -19,6 +19,8 @@ _document_registry = {}
 def get_document(name):
     return _document_registry[name]
 
+class InvalidDocumentError(Exception):
+    pass
 
 
 class ValidationError(AssertionError):
@@ -510,10 +512,6 @@ class DocumentMetaclass(type):
                     field_name = attr_name
                 else:
                     field_name = attr_value.db_field
-
-                # a sanity check
-                assert field_name not in field_names, "Field %s already exists in %s!" % (field_name, name)
-                field_names.add(field_name)
 
                 doc_fields[attr_name] = attr_value
                 field_names[attr_value.db_field] = field_names.get(attr_value.db_field, 0) + 1

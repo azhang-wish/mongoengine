@@ -10,7 +10,8 @@ from connection import get_db, DEFAULT_CONNECTION_NAME
 __all__ = ['Document', 'EmbeddedDocument', 'DynamicDocument',
            'DynamicEmbeddedDocument', 'OperationError', 'InvalidCollectionError']
 
-__all__ = ['Document', 'EmbeddedDocument', 'ValidationError', 'OperationError']
+class InvalidCollectionError(Exception):
+    pass
 
 
 class EmbeddedDocument(BaseDocument):

@@ -598,14 +598,6 @@ class DictField(BaseField):
         if not isinstance(value, dict):
             self.error('Only dictionaries may be used in a DictField')
 
-<<<<<<< HEAD
-        if any(('.' in k or '$' in k) for k in value):
-            raise ValidationError('Invalid dictionary key name - keys may not '
-                                  'contain "." or "$" characters')
-
-    def lookup_member(self, member_name):
-        return self.basecls(db_field=member_name)
-=======
         if any(k for k in value.keys() if not isinstance(k, basestring)):
             self.error('Invalid dictionary key - documents must have only string keys')
         if any(('.' in k or '$' in k) for k in value.keys()):
