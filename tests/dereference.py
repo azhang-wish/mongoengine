@@ -1,7 +1,7 @@
 import unittest
 
 from mongoengine import *
-from mongoengine.connection import _get_db
+from mongoengine.connection import get_db
 from mongoengine.tests import query_counter
 
 
@@ -9,7 +9,7 @@ class FieldTest(unittest.TestCase):
 
     def setUp(self):
         connect(db='mongoenginetest')
-        self.db = _get_db()
+        self.db = get_db()
 
     def test_list_item_dereference(self):
         """Ensure that DBRef items in ListFields are dereferenced.
@@ -128,6 +128,110 @@ class FieldTest(unittest.TestCase):
 
                 self.assertEquals(employee.friends, friends)
                 self.assertEqual(q, 2)
+
+    def test_circular_reference(self):
+        """Ensure you can handle circular references
+        """
+        class Person(Document):
+            name = StringField()
+            relations = ListField(EmbeddedDocumentField('Relation'))
+
+            def __repr__(self):
+                return "<Person: %s>" % self.name
+
+        class Relation(EmbeddedDocument):
+            name = StringField()
+            person = ReferenceField('Person')
+
+        Person.drop_collection()
+        mother = Person(name="Mother")
+        daughter = Person(name="Daughter")
+
+        mother.save()
+        daughter.save()
+
+        daughter_rel = Relation(name="Daughter", person=daughter)
+        mother.relations.append(daughter_rel)
+        mother.save()
+
+        mother_rel = Relation(name="Daughter", person=mother)
+        self_rel = Relation(name="Self", person=daughter)
+        daughter.relations.append(mother_rel)
+        daughter.relations.append(self_rel)
+        daughter.save()
+
+        self.assertEquals("[<Person: Mother>, <Person: Daughter>]", "%s" % Person.objects())
+
+    def test_circular_reference_on_self(self):
+        """Ensure you can handle circular references
+        """
+        class Person(Document):
+            name = StringField()
+            relations = ListField(ReferenceField('self'))
+
+            def __repr__(self):
+                return "<Person: %s>" % self.name
+
+        Person.drop_collection()
+        mother = Person(name="Mother")
+        daughter = Person(name="Daughter")
+
+        mother.save()
+        daughter.save()
+
+        mother.relations.append(daughter)
+        mother.save()
+
+        daughter.relations.append(mother)
+        daughter.relations.append(daughter)
+        daughter.save()
+
+        self.assertEquals("[<Person: Mother>, <Person: Daughter>]", "%s" % Person.objects())
+
+    def test_circular_tree_reference(self):
+        """Ensure you can handle circular references with more than one level
+        """
+        class Other(EmbeddedDocument):
+            name = StringField()
+            friends = ListField(ReferenceField('Person'))
+
+        class Person(Document):
+            name = StringField()
+            other = EmbeddedDocumentField(Other, default=lambda: Other())
+
+            def __repr__(self):
+                return "<Person: %s>" % self.name
+
+        Person.drop_collection()
+        paul = Person(name="Paul")
+        paul.save()
+        maria = Person(name="Maria")
+        maria.save()
+        julia = Person(name='Julia')
+        julia.save()
+        anna = Person(name='Anna')
+        anna.save()
+
+        paul.other.friends = [maria, julia, anna]
+        paul.other.name = "Paul's friends"
+        paul.save()
+
+        maria.other.friends = [paul, julia, anna]
+        maria.other.name = "Maria's friends"
+        maria.save()
+
+        julia.other.friends = [paul, maria, anna]
+        julia.other.name = "Julia's friends"
+        julia.save()
+
+        anna.other.friends = [paul, maria, julia]
+        anna.other.name = "Anna's friends"
+        anna.save()
+
+        self.assertEquals(
+            "[<Person: Paul>, <Person: Maria>, <Person: Julia>, <Person: Anna>]",
+            "%s" % Person.objects()
+        )
 
     def test_generic_reference(self):
 
@@ -656,3 +760,53 @@ class FieldTest(unittest.TestCase):
         UserB.drop_collection()
         UserC.drop_collection()
         Group.drop_collection()
+
+    def test_multidirectional_lists(self):
+
+        class Asset(Document):
+            name = StringField(max_length=250, required=True)
+            parent = GenericReferenceField(default=None)
+            parents = ListField(GenericReferenceField())
+            children = ListField(GenericReferenceField())
+
+        Asset.drop_collection()
+
+        root = Asset(name='', path="/", title="Site Root")
+        root.save()
+
+        company = Asset(name='company', title='Company', parent=root, parents=[root])
+        company.save()
+
+        root.children = [company]
+        root.save()
+
+        root = root.reload()
+        self.assertEquals(root.children, [company])
+        self.assertEquals(company.parents, [root])
+
+    def test_dict_in_dbref_instance(self):
+
+        class Person(Document):
+            name = StringField(max_length=250, required=True)
+
+        class Room(Document):
+            number = StringField(max_length=250, required=True)
+            staffs_with_position = ListField(DictField())
+
+        Person.drop_collection()
+        Room.drop_collection()
+
+        bob = Person.objects.create(name='Bob')
+        bob.save()
+        sarah = Person.objects.create(name='Sarah')
+        sarah.save()
+
+        room_101 = Room.objects.create(number="101")
+        room_101.staffs_with_position = [
+            {'position_key': 'window', 'staff': sarah},
+            {'position_key': 'door', 'staff': bob.to_dbref()}]
+        room_101.save()
+
+        room = Room.objects.first().select_related()
+        self.assertEquals(room.staffs_with_position[0]['staff'], sarah)
+        self.assertEquals(room.staffs_with_position[1]['staff'], bob)

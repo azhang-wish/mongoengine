@@ -9,7 +9,11 @@ Signal support is provided by the excellent `blinker`_ library and
 will gracefully fall back if it is not available.
 
 
-The following document signals exist in MongoEngine and are pretty self explaintary:
+<<<<<<< HEAD
+The following document signals exist in MongoEngine and are pretty self explanatory:
+=======
+The following document signals exist in MongoEngine and are pretty self-explanatory:
+>>>>>>> master
 
   * `mongoengine.signals.pre_init`
   * `mongoengine.signals.post_init`
@@ -17,6 +21,8 @@ The following document signals exist in MongoEngine and are pretty self explaint
   * `mongoengine.signals.post_save`
   * `mongoengine.signals.pre_delete`
   * `mongoengine.signals.post_delete`
+  * `mongoengine.signals.pre_bulk_insert`
+  * `mongoengine.signals.post_bulk_insert`
 
 Example usage::
 
@@ -42,8 +48,8 @@ Example usage::
                 else:
                     logging.debug("Updated")
 
-        signals.pre_save.connect(Author.pre_save, sender=Author)
-        signals.post_save.connect(Author.post_save, sender=Author)
+    signals.pre_save.connect(Author.pre_save, sender=Author)
+    signals.post_save.connect(Author.post_save, sender=Author)
 
 
 .. _blinker: http://pypi.python.org/pypi/blinker

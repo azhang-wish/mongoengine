@@ -10,9 +10,7 @@ from queryset import *
 __all__ = (document.__all__ + fields.__all__ + connection.__all__ +
            queryset.__all__)
 
-__author__ = 'Harry Marr'
-
-VERSION = (0, 4, 0)
+VERSION = (0, 6, 2)
 
 def get_version():
     version = '%s.%s' % (VERSION[0], VERSION[1])
