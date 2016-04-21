@@ -1,7 +1,9 @@
 from pymongo.mongo_client import MongoClient
-from pymongo_greenlet import GreenletClient
+from pymongo_greenlet import GreenletClient, patch_pymongo, unpatch_pymongo
 from pymongo.read_preferences import ReadPreference
+import pymongo.topology
 import collections
+from tornado import ioloop
 
 __all__ = ['ConnectionError', 'connect', 'set_default_db', 'SlaveOkSettings']
 
@@ -63,9 +65,13 @@ def connect(host='localhost', conn_name=None, db_names=None, allow_async=False,
     if conn_name not in _connections:
         try:
             if allow_async:
+                io_loop = kwargs.pop('io_loop', ioloop.IOLoop.instance())
+                patch_pymongo(io_loop)
                 async_conn = GreenletClient.sync_connect(host, **kwargs)
+                unpatch_pymongo()
             else:
                 async_conn = None
+            kwargs.pop('io_loop', None)
 
             sync_conn = MongoClient(host, **kwargs)
 

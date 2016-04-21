@@ -11,7 +11,7 @@ import freezegun
 import greenlet
 from tornado import ioloop
 
-from mongoengine import pymongo_greenlet
+from mongoengine import pymongo_greenlet, connection
 
 
 # wrapper function to limit test execution time to 1s
@@ -61,7 +61,9 @@ class GreenletTestCase(unittest.TestCase):
         # we don't expect exceptions from callbacks.
         def fail_immediate(callback):
             traceback.print_exception(*sys.exc_info())
-            raise Exception('Exception from ioloop callback!')
+            raise Exception(
+                'Exception from ioloop callback: {0}'.format(sys.exc_info()[1])
+            )
         self.ioloop.handle_callback_exception = fail_immediate
         self.states = []
 
@@ -80,6 +82,7 @@ class GreenletLockTestCase(GreenletTestCase):
         super(GreenletLockTestCase, self).setUp()
         self.lock = pymongo_greenlet.GreenletLock(self.ioloop)
 
+    @unittest.skip('yielding while holding lock')
     @time_limited
     def test_single_acquire(self):
         def run_1():
@@ -102,6 +105,7 @@ class GreenletLockTestCase(GreenletTestCase):
 
         self.assertState(3)
 
+    @unittest.skip('yielding while holding lock')
     @time_limited
     def test_acquire_release(self):
         def run_1():
@@ -143,6 +147,7 @@ class GreenletLockTestCase(GreenletTestCase):
 
         self.assertState(1)
 
+    @unittest.skip('yielding while holding lock')
     @time_limited
     def test_lock_as_context_manager(self):
         def run_1():
@@ -168,6 +173,21 @@ class GreenletLockTestCase(GreenletTestCase):
         self.ioloop.start()
 
         self.assertState(6)
+
+    @time_limited
+    def test_cannot_yield_while_holding_lock(self):
+        def run():
+            self.lock.acquire()
+            greenlet.getcurrent().parent.switch()
+
+        green = greenlet.greenlet(run)
+
+        self.ioloop.add_callback(green.switch)
+
+        with self.assertRaises(Exception) as cm:
+            self.ioloop.start()
+
+        self.assertIn('yielding while holding', cm.exception.message)
 
 
 class GreenletConditionTestCase(GreenletTestCase):
@@ -361,7 +381,8 @@ class GreenletPeriodicExecutorTestCase(GreenletTestCase):
             5,
             'dummy',
             target,
-            self.ioloop
+            'dummy',
+            io_loop=self.ioloop
         )
 
         with freezegun.freeze_time('12:00'):
@@ -391,7 +412,8 @@ class GreenletPeriodicExecutorTestCase(GreenletTestCase):
             5,
             'dummy',
             target,
-            self.ioloop
+            'dummy',
+            io_loop=self.ioloop
         )
 
         def run(frozen):
@@ -442,7 +464,8 @@ class GreenletPeriodicExecutorTestCase(GreenletTestCase):
             5,
             'dummy',
             target,
-            self.ioloop
+            'dummy',
+            io_loop=self.ioloop
         )
 
         def run(frozen):
@@ -485,7 +508,8 @@ class GreenletPeriodicExecutorTestCase(GreenletTestCase):
             5,
             'dummy',
             target,
-            self.ioloop
+            'dummy',
+            io_loop=self.ioloop
         )
 
         with freezegun.freeze_time('12:00'):
@@ -495,7 +519,7 @@ class GreenletPeriodicExecutorTestCase(GreenletTestCase):
             self.ioloop.start()
 
         self.assertState(2)
-    
+
     @time_limited
     def test_executor_does_not_execute_if_immediately_closed(self):
         def target():
@@ -505,7 +529,8 @@ class GreenletPeriodicExecutorTestCase(GreenletTestCase):
             5,
             'dummy',
             target,
-            self.ioloop
+            'dummy',
+            io_loop=self.ioloop
         )
 
         def run():
@@ -541,7 +566,8 @@ class GreenletPeriodicExecutorTestCase(GreenletTestCase):
             5,
             'dummy',
             target,
-            self.ioloop
+            'dummy',
+            io_loop=self.ioloop
         )
 
         def run():
@@ -583,7 +609,8 @@ class GreenletPeriodicExecutorTestCase(GreenletTestCase):
             5,
             'dummy',
             target,
-            self.ioloop
+            'dummy',
+            io_loop=self.ioloop
         )
 
         def run():
@@ -630,7 +657,8 @@ class GreenletPeriodicExecutorTestCase(GreenletTestCase):
             5,
             'dummy',
             target,
-            self.ioloop
+            'dummy',
+            io_loop=self.ioloop
         )
 
         def run():
@@ -651,6 +679,56 @@ class GreenletPeriodicExecutorTestCase(GreenletTestCase):
             self.ioloop.start()
 
         self.assertState(4)
+
+
+class AsyncClientTestCase(GreenletTestCase):
+    def test_can_do_concurrent_operations(self):
+        connection.connect(allow_async=True, io_loop=self.ioloop)
+        db = connection._get_db('test')
+
+        tasks_complete = {
+            'task_2': False,
+            'task_3': False
+        }
+
+        def task_1():
+            db['pymongo_test_coll'].drop()
+            self.ioloop.add_callback(green_2.switch)
+            self.ioloop.add_callback(green_3.switch)
+
+        def task_2():
+            item_id = db.pymongo_test_coll.insert_one({
+                'val': 'test_1'
+            }).inserted_id
+            doc = db.pymongo_test_coll.find_one({'_id': item_id})
+            self.assertEqual(doc, {'_id': item_id, 'val': 'test_1'})
+            tasks_complete['task_2'] = True
+            if tasks_complete['task_3']:
+                green_4.switch()
+
+        def task_3():
+            item_id = db.pymongo_test_coll.insert_one({
+                'val': 'test_2'
+            }).inserted_id
+            doc = db.pymongo_test_coll.find_one({'_id': item_id})
+            self.assertEqual(doc, {'_id': item_id, 'val': 'test_2'})
+            tasks_complete['task_3'] = True
+            if tasks_complete['task_2']:
+                green_4.switch()
+
+        def task_4():
+            self.assertEqual(db.pymongo_test_coll.count(), 2)
+            self.ioloop.add_callback(self.ioloop.stop)
+
+        green_1 = greenlet.greenlet(task_1)
+        green_2 = greenlet.greenlet(task_2)
+        green_3 = greenlet.greenlet(task_3)
+        green_4 = greenlet.greenlet(task_4)
+
+        self.ioloop.add_callback(green_1.switch)
+
+        self.ioloop.start()
+
 
 if __name__ == '__main__':
     unittest.main()

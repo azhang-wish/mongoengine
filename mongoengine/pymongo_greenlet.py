@@ -1,14 +1,24 @@
 import atexit
+import logging
 import functools
 import socket
+import time
 import warnings
 import weakref
-import time
+
+import pymongo
+import pymongo.common
+import pymongo.errors
+import pymongo.monitor
+import pymongo.mongo_client
+import pymongo.mongo_replica_set_client
+import pymongo.pool
+import pymongo.topology
 
 # So that 'setup.py doc' can import this module without Tornado or greenlet
 requirements_satisfied = True
 try:
-    from tornado import ioloop, iostream, locks
+    from tornado import ioloop, iostream
 except ImportError:
     requirements_satisfied = False
     warnings.warn("Tornado not installed", ImportWarning)
@@ -19,15 +29,6 @@ except ImportError:
     requirements_satisfied = False
     warnings.warn("greenlet module not installed", ImportWarning)
 
-
-import pymongo
-import pymongo.common
-import pymongo.errors
-import pymongo.mongo_client
-import pymongo.mongo_replica_set_client
-import pymongo.pool
-import pymongo.son_manipulator
-import logging
 
 class MongoIOStream(iostream.IOStream):
     def can_read_sync(self, num_bytes):
@@ -195,13 +196,15 @@ class GreenletPool(pymongo.pool.Pool):
         self.io_loop = io_loop if io_loop else ioloop.IOLoop.instance()
         pymongo.pool.Pool.__init__(self, *args, **kwargs)
 
-        if self.max_size is not None and self.wait_queue_multiple:
+        max_size = self.opts.max_pool_size
+        if max_size is not None and self.opts.wait_queue_multiple:
             raise ValueError("GreenletPool doesn't support wait_queue_multiple")
 
+        self.lock = GreenletLock(io_loop)
         # HACK [adam Dec/6/14]: need to use our IOLoop/greenlet semaphore
         #      implementation, so override what Pool.__init__ sets
         #      self._socket_semaphore to here
-        self._socket_semaphore = GreenletBoundedSemaphore(self.max_size)
+        self._socket_semaphore = GreenletBoundedSemaphore(max_size)
 
     def create_connection(self):
         """Copy of BasePool.connect()
@@ -247,41 +250,6 @@ class GreenletPool(pymongo.pool.Pool):
             # support IPv6.
             raise socket.error('getaddrinfo failed')
 
-
-class GreenletEvent(object):
-    def __init__(self, io_loop):
-        self.io_loop = io_loop
-
-        self._flag = False
-        self._waiters = []
-
-    def is_set(self):
-        return self._flag
-
-    isSet = is_set
-
-    def set(self):
-        self._flag = True
-        waiters, self._waiters = self._waiters, []
-
-        # wake up all the greenlets that were waiting
-        for waiter in waiters:
-            self.io_loop.add_callback(waiter.switch)
-
-    def clear(self):
-        self._flag = False
-
-    def wait(self):
-        current = greenlet.getcurrent()
-        parent = current.parent
-        assert parent, "Must be called on child greenlet"
-
-        # yield back to the IOLoop if we have to wait
-        if not self._flag:
-            self._waiters.append(current)
-            parent.switch()
-
-        return self._flag
 
 class GreenletSemaphore(object):
     """
@@ -392,12 +360,13 @@ class GreenletBoundedSemaphore(GreenletSemaphore):
 class GreenletPeriodicExecutor(object):
     _executors = set()
 
-    def __init__(self, interval, dummy, target, io_loop):
-        # dummy is in the place of min_interval which has no semantic
-        # equivalent in this implementation
+    def __init__(self, interval, condition_class,
+                 target, min_interval, io_loop=None):
+        # condition_class and min_interval not used, but have to be here
+        # with the correct name since they're sometimes accessed as kwargs
         self._interval = interval
         self._target = target
-        self._io_loop = io_loop
+        self._io_loop = io_loop or ioloop.IOLoop.instance()
 
         self._stopped = True
         self._next_timeout = None
@@ -457,7 +426,18 @@ class GreenletPeriodicExecutor(object):
             return
 
         try:
-            if not self._target():
+            target_greenlet = greenlet.greenlet(self._target)
+            result = target_greenlet.switch()
+            if not target_greenlet.dead:
+                # HACK (pwhite, 25/05/16): the assumption is that all targets
+                # will complete execution without yielding. if this is false,
+                # this exception will be raised.
+                # If it becomes an issue, deal with it by killing execution
+                # and continuing, so the execution happens after the next
+                # period.
+                raise Exception('Greenlet execution did not complete.'
+                                'Tell infra to check pymongo_greenlet.py:440')
+            if not result:
                 self._stopped = True
                 return
         except Exception:
@@ -492,17 +472,33 @@ class GreenletLock(object):
     #     # lock is granted, potentially corrupting state for greenlet 1
 
     # don't need to be too fancy or thread-safe because it's only coroutines
+
+    # HACK (pwhite, 25/4/16): greenlet locks, are, for now, unyielding.
+    # it is an exception to switch to the parent greenlet while holding the
+    # lock.
+    # this is achieved with monkey patching, so:
+    # DO NOT SWITCH TO ANY OTHER GREENLET WHILE HOLDING A LOCK. THE UNIVERSE
+    # MAY BE RENT ASUNDER IF YOU DO.
     def __init__(self, io_loop):
         # not an rlock, so we don't need to keep track of the holder,
         # but might as well for sanity-checking
         self.holder = None
         self.waiters = []
         self.io_loop = io_loop
+        self._old_parent_switch = None
 
     def acquire(self, blocking=True):
         current = greenlet.getcurrent()
         parent = current.parent
         assert parent, "Must be called on child greenlet"
+
+        def raise_on_yield():
+            # this will cause the stack to go back through __exit__
+            # which restores the parent.switch method
+            raise Exception('Greenlet yielding while holding lock!')
+
+        self._old_parent_switch = parent.switch
+        parent.switch = raise_on_yield
 
         while self.holder:
             if blocking:
@@ -516,10 +512,14 @@ class GreenletLock(object):
     def release(self):
         current = greenlet.getcurrent()
         assert self.holder is current, 'must be held'
+        parent = current.parent
+
         self.holder = None
         if self.waiters:
             waiter = self.waiters.pop(0)
             self.io_loop.add_callback(waiter.switch)
+
+        parent.switch = self._old_parent_switch
 
     def __enter__(self):
         self.acquire()
@@ -575,6 +575,18 @@ class GreenletCondition(object):
                 self.io_loop.remove_timeout(timeout)
 
 
+class GreenletTopology(pymongo.topology.Topology):
+    # use greenlet versions of synchronization primitives
+    def __init__(self, *args, **kwargs):
+        super(GreenletTopology, self).__init__(*args, **kwargs)
+        io_loop = ioloop.IOLoop.instance()
+        # hack out their sync primitives with our own
+        # we could pass _condition_class as a kwarg but we'd need to reinit it
+        # anyways so don't bother
+        self._lock = GreenletLock(io_loop)
+        self._condition = GreenletCondition(io_loop, self._lock)
+
+
 class GreenletClient(object):
     client = None
 
@@ -587,6 +599,8 @@ class GreenletClient(object):
         """
 
         assert not greenlet.getcurrent().parent, "must be run on root greenlet"
+        assert 'pymongo.periodic_executor' in _patched, \
+            'must patch pymongo before calling sync_connect'
 
         def _inner_connect(io_loop, *args, **kwargs):
             # add another callback to the IOLoop to stop it (executed
@@ -595,11 +609,12 @@ class GreenletClient(object):
 
             # asynchronously create a MongoClient using our IOLoop
             try:
-                kwargs['use_greenlets'] = False
                 kwargs['_pool_class'] = GreenletPool
-                kwargs['_event_class'] = functools.partial(GreenletEvent,
-                                                           io_loop)
+                # monitor doesn't need to be replaced.
+                # the only complication is the periodic executor, which
+                # should already be patched out.
                 cls.client = pymongo.mongo_client.MongoClient(*args, **kwargs)
+                cls.client.__lock = GreenletLock(io_loop)
             except:
                 logging.exception("Failed to connect to MongoDB")
             finally:
@@ -617,3 +632,35 @@ class GreenletClient(object):
         io_loop.start()
 
         return cls.client
+
+_NONE = object()
+_patched = dict()
+
+
+def patch_item(module, attr, newitem):
+    # _NONE to avoid an attribute that is actually None
+    olditem = getattr(module, attr, _NONE)
+    if olditem is not _NONE:
+        _patched.setdefault(module.__name__, {})[attr] = olditem
+    setattr(module, attr, newitem)
+
+
+def unpatch_item(module, attr):
+    assert module.__name__ in _patched, 'object is not patched'
+    assert attr in _patched[module.__name__], 'object is not patched'
+
+    olditem = _patched[module.__name__].pop(attr)
+    setattr(module, attr, olditem)
+
+
+def patch_pymongo(io_loop):
+    patch_item(pymongo.topology, 'Topology', GreenletTopology)
+    patch_item(pymongo.mongo_client, 'Topology', GreenletTopology)
+    patch_item(pymongo.periodic_executor, 'PeriodicExecutor',
+               functools.partial(GreenletPeriodicExecutor, io_loop=io_loop))
+
+
+def unpatch_pymongo():
+    unpatch_item(pymongo.topology, 'Topology')
+    unpatch_item(pymongo.mongo_client, 'Topology')
+    unpatch_item(pymongo.periodic_executor, 'PeriodicExecutor')
