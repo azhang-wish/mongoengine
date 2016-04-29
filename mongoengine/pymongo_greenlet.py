@@ -614,7 +614,7 @@ class GreenletClient(object):
                 # the only complication is the periodic executor, which
                 # should already be patched out.
                 cls.client = pymongo.mongo_client.MongoClient(*args, **kwargs)
-                cls.client.__lock = GreenletLock(io_loop)
+                cls.client._MongoClient__lock = GreenletLock(io_loop)
             except:
                 logging.exception("Failed to connect to MongoDB")
             finally:
