@@ -16,7 +16,7 @@ import datetime
 import decimal
 import warnings
 import types
-
+import ciso8601
 
 __all__ = ['StringField', 'IntField', 'FloatField', 'BooleanField',
            'DateTimeField', 'EmbeddedDocumentField', 'ListField', 'DictField',
@@ -239,6 +239,26 @@ class BooleanField(BaseField):
 class DateTimeField(BaseField):
     """A datetime field.
     """
+
+    def to_python(self, value):
+        if isinstance(value, datetime.datetime):
+            return value
+        elif isinstance(value, basestring):
+            try:
+                return ciso8601.parse_datetime_unaware(value)
+            except Exception:
+                return value
+        return value
+
+    def to_mongo(self, value):
+        if isinstance(value, datetime.datetime):
+            return value
+        elif isinstance(value, basestring):
+            try:
+                return ciso8601.parse_datetime_unaware(value)
+            except Exception:
+                return value
+        return value
 
     def validate(self, value):
         assert isinstance(value, datetime.datetime)
