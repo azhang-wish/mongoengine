@@ -229,6 +229,11 @@ class ObjectIdField(BaseField):
     """
 
     def to_python(self, value):
+        if not isinstance(value, bson.objectid.ObjectId):
+            try:
+                return bson.objectid.ObjectId(unicode(value))
+            except Exception:
+                return value
         return value
         # return unicode(value)
 
