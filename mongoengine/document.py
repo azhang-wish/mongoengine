@@ -168,7 +168,8 @@ class Document(BaseDocument):
                             doc,
                             upsert=True,
                             write_concern=w,
-                            multi=False
+                            multi=False,
+                            from_save=True
                         )
                         object_id = doc["_id"]
                     else:
