@@ -1348,6 +1348,7 @@ class Document(BaseDocument):
 
         try:
             with log_slow_event("remove", cls._meta['collection'], spec):
+                kwargs.pop('from_delete', None)
                 result = cls._pymongo().remove(
                     spec,
                     w=cls._meta['write_concern'],
