@@ -2,7 +2,7 @@ from base import (DocumentMetaclass, TopLevelDocumentMetaclass, BaseDocument,
                   ValidationError, MongoComment, get_document, FieldStatus,
                   FieldNotLoadedError)
 from queryset import OperationError
-from cl.utils.greenletutil import CLGreenlet, GreenletUtil
+from greenletutil import CLGreenlet, GreenletUtil
 import contextlib
 import pymongo
 import time
