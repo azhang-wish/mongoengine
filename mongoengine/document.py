@@ -1526,7 +1526,9 @@ class Document(BaseDocument):
                            '$elemMatch', '$size', '$type', '$not', '$returnKey',
                            '$maxScan', '$orderby', '$explain', '$snapshot',
                            '$max', '$min', '$showDiskLoc', '$hint', '$comment',
-                           '$slice', '$options', '$regex', '$position']
+                           '$slice', '$options', '$regex', '$position',
+                           '$add', '$subtract', '$multiply', '$divide',
+                           '$expr', '$cond',]
 
         # recurse on list, unless we're at a ListField
         if isinstance(value, list) and not isinstance(context, ListField):
