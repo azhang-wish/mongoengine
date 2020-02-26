@@ -1528,7 +1528,10 @@ class Document(BaseDocument):
                            '$max', '$min', '$showDiskLoc', '$hint', '$comment',
                            '$slice', '$options', '$regex', '$position',
                            '$add', '$subtract', '$multiply', '$divide',
-                           '$expr', '$cond',]
+                           '$expr', '$cond', '$toLower', '$toUpper', '$trim'
+                           '$year', '$week', '$month', '$dayOfYear', '$dayOfWeek',
+                           '$dayOfMonth', '$sum', '$sqrt', '$not', '$ifNull',
+                           '$avg', '$ceil', '$floor', '$abs', '$pow',]
 
         # recurse on list, unless we're at a ListField
         if isinstance(value, list) and not isinstance(context, ListField):
