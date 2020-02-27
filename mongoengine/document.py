@@ -1531,7 +1531,8 @@ class Document(BaseDocument):
                            '$expr', '$cond', '$toLower', '$toUpper', '$trim'
                            '$year', '$week', '$month', '$dayOfYear', '$dayOfWeek',
                            '$dayOfMonth', '$sum', '$sqrt', '$not', '$ifNull',
-                           '$avg', '$ceil', '$floor', '$abs', '$pow',]
+                           '$avg', '$ceil', '$floor', '$abs', '$pow', '$trim',
+                           '$ltrim', '$rtrim',]
 
         # recurse on list, unless we're at a ListField
         if isinstance(value, list) and not isinstance(context, ListField):
