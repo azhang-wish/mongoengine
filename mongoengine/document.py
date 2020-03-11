@@ -1850,7 +1850,12 @@ class Document(BaseDocument):
             if isinstance(context, EmbeddedDocumentField):
                 potential_fields = get_embedded_doc_fields(context.document_type)
                 if first_part in potential_fields:
-                    return ".".join([prefix,potential_fields[first_part].db_field]), potential_fields[first_part]
+                    field = potential_fields[first_part]
+                    result = ".".join([prefix, field.db_field])
+                    if rest:
+                        return Document._transform_key(rest, field, prefix=result, is_find=is_find)
+                    else:
+                        return result, field
                 if first_part == '_cls':
                     return ".".join([prefix,'_cls']), CLSContext()
             raise ValueError("Can't find field %s" % first_part)
