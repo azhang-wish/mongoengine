@@ -1,3 +1,5 @@
+from pymongo.common import WriteConcern
+from pymongo.collection import ReturnDocument
 from base import (DocumentMetaclass, TopLevelDocumentMetaclass, BaseDocument,
                   ValidationError, MongoComment, get_document, get_embedded_doc_fields,
                   FieldStatus, FieldNotLoadedError)
@@ -16,7 +18,7 @@ from timer import log_slow_event
 import warnings
 
 from bson import SON, ObjectId, DBRef
-from connection import _get_db, _get_slave_ok, _get_proxy_client, _get_proxy_decider, OpClass
+from connection import _get_db, _native_get_db, _get_slave_ok, _get_proxy_client, _get_proxy_decider, OpClass
 
 try:
     from soa.services.base_client import RPCException
@@ -37,6 +39,24 @@ OPS_EMAIL = 'ops@wish.com'
 high_offset_logger = logging.getLogger('sweeper.prod.mongodb_high_offset')
 execution_timeout_logger = logging.getLogger('sweeper.prod.mongodb_execution_timeout')
 notimeout_cursor_logger = logging.getLogger('sweeper.prod.mongodb_notimeout')
+
+
+class GreenCursor(object):
+    def __init__(self, cur):
+        self.cur = cur
+        def generator():
+            while self.cur.fetch_next:
+                yield self.cur.next_object()
+        self.generator = generator()
+
+    def __getattr__(self, item):
+        return getattr(self.cur, item)
+
+    def next(self):
+        doc = self.generator.next()
+        if doc is None:
+            raise StopIteration
+        return doc
 
 class CLSContext(object):
     pass
@@ -146,6 +166,7 @@ class Document(BaseDocument):
         doc = self.to_mongo()
         try:
             w = self._meta.get('write_concern', 1)
+            done = False
             if force_insert or "_id" not in doc:
                 if proxy_client:
                     if self._get_write_decider():
@@ -156,12 +177,7 @@ class Document(BaseDocument):
                         proxy_client.instance().insert(
                             self.__class__, [doc], write_concern=w)
                         object_id = doc['_id']
-                    else:
-                        collection = self._pymongo()
-                        object_id = collection.insert(doc, w=w)
-                else:
-                    collection = self._pymongo()
-                    object_id = collection.insert(doc, w=w)
+                        done = True
             else:
                 if proxy_client:
                     if self._get_write_decider():
@@ -174,9 +190,11 @@ class Document(BaseDocument):
                             multi=False
                         )
                         object_id = doc["_id"]
-                    else:
-                        collection = self._pymongo()
-                        object_id = collection.save(doc, w=w)
+                        done = True
+            if not done:
+                client = self._client()
+                if client:
+                    object_id = client.with_options(write_concern=WriteConcern(w=w)).insert_one(doc).inserted_id
                 else:
                     collection = self._pymongo()
                     object_id = collection.save(doc, w=w)
@@ -590,6 +608,25 @@ class Document(BaseDocument):
         return _get_proxy_decider(OpClass.WRITE)
 
     @classmethod
+    def _client(cls, use_async=True):
+        try:
+            # we can't do async queries if we're on the root greenlet since we have
+            # nothing to yield back to
+            use_async &= bool(greenlet.getcurrent().parent)
+
+            if not hasattr(cls, '_native_collection'):
+                cls._native_collection = {}
+
+            if use_async not in cls._native_collection:
+                cls._native_collection[use_async] = \
+                        _native_get_db(cls._meta['db_name'],
+                                allow_async=use_async)[cls._meta['collection']]
+
+            return cls._native_collection[use_async]
+        except TypeError:
+            return None
+
+    @classmethod
     def _pymongo(cls, use_async=True):
         # we can't do async queries if we're on the root greenlet since we have
         # nothing to yield back to
@@ -827,11 +864,20 @@ class Document(BaseDocument):
                 set_comment = False
 
                 with log_slow_event('find', cls._meta['collection'], spec):
-                    cur = cls._pymongo(allow_async).find(spec, fields,
-                                          skip=skip, limit=limit, sort=sort,
-                                          read_preference=slave_ok.read_pref,
-                                          tag_sets=slave_ok.tags,
-                                          **kwargs)
+                    client = cls._client(allow_async)
+                    if client:
+                        if "timeout" in kwargs:
+                            kwargs.pop("timeout")
+                        cur = client.with_options(read_preference=slave_ok.read_pref).find(
+                            spec, fields,
+                            skip=skip, limit=limit, sort=sort,
+                            **kwargs)
+                    else:
+                        cur = cls._pymongo(allow_async).find(spec, fields,
+                                              skip=skip, limit=limit, sort=sort,
+                                              read_preference=slave_ok.read_pref,
+                                              tag_sets=slave_ok.tags,
+                                              **kwargs)
 
                     # max_time_ms <= 0 means its disabled, None means
                     # use default value, otherwise use the value specified
@@ -854,12 +900,19 @@ class Document(BaseDocument):
                     cur.comment(comment)
 
                     if find_one:
-                        for result in cur.limit(-1):
-                            return result, set_comment
-                        return None, set_comment
+                        if client:
+                            for result in cur.to_list(1):
+                                return result, set_comment
+                            return None, set_comment
+                        else:
+                            for result in cur.limit(-1):
+                                return result, set_comment
+                            return None, set_comment
                     else:
                         cur.batch_size(batch_size)
 
+                    if client:
+                        return GreenCursor(cur), set_comment
                     return cur, set_comment
                 break
             # delay & retry once on AutoReconnect error
@@ -1014,9 +1067,14 @@ class Document(BaseDocument):
                         cls, pipeline=pipeline):
                     results.append(doc)
                 return {'result': results}
-        result = cls._pymongo().aggregate(
-            pipeline,
-            read_preference=pymongo.read_preferences.ReadPreference.SECONDARY)
+        client = cls._client()
+        if client:
+            result = client.with_options(
+                read_preference=pymongo.read_preferences.ReadPreference.SECONDARY).aggregate(pipeline)
+        else:
+            result = cls._pymongo().aggregate(
+                pipeline,
+                read_preference=pymongo.read_preferences.ReadPreference.SECONDARY)
         if result:
             return result
         else:
@@ -1150,6 +1208,8 @@ class Document(BaseDocument):
     def find_and_modify(cls, spec, update=None, sort=None, remove=False,
                         new=False, fields=None, upsert=False,
                         excluded_fields=None, skip_transform=False, **kwargs):
+        if remove and new:
+            raise ValueError("Cannot return updated document after deletion")
         if skip_transform:
             if update is None and not remove:
                 raise ValueError("Cannot have empty update and no remove flag")
@@ -1196,10 +1256,25 @@ class Document(BaseDocument):
 
         try:
             with log_slow_event("find_and_modify", cls._meta['collection'], spec):
-                result = cls._pymongo().find_and_modify(
-                    spec, sort=sort, remove=remove, update=update, new=new,
-                    fields=transformed_fields, upsert=upsert, **kwargs
-                )
+                client = cls._client()
+                if client:
+                    ret = ReturnDocument.AFTER if new else ReturnDocument.BEFORE
+                    sort = [("$natural", pymongo.ASCENDING)] if sort == {} else list(sort.iteritems())
+                    if update is None:
+                        result = client.find_one_and_delete(
+                            spec, sort=sort, remove=remove,
+                            upsert=upsert, **kwargs
+                        )
+                    else:
+                        result = client.find_one_and_update(
+                            spec, sort=sort, update=update, return_document=ret,
+                            upsert=upsert, **kwargs
+                        )
+                else:
+                    result = cls._pymongo().find_and_modify(
+                        spec, sort=sort, remove=remove, update=update, new=new,
+                        fields=transformed_fields, upsert=upsert, **kwargs
+                    )
             if result:
                 return cls._from_augmented_son(result, fields, excluded_fields)
             else:
@@ -1229,6 +1304,12 @@ class Document(BaseDocument):
                     cls.cleanup_trace(set_comment)
 
         kwargs['comment'] = comment
+
+        client = cls._client()
+        if client:
+            spec = cls._transform_value(spec, cls)
+            spec = cls._update_spec(spec)
+            return client.count_documents(spec)
 
         cur, set_comment = cls.find_raw(spec, slave_ok=slave_ok,
             max_time_ms=max_time_ms, **kwargs)
@@ -1319,12 +1400,29 @@ class Document(BaseDocument):
 
         try:
             with log_slow_event("update", cls._meta['collection'], spec):
-                result = cls._pymongo().update(spec,
-                                               document,
-                                               upsert=upsert,
-                                               multi=multi,
-                                               w=cls._meta['write_concern'],
-                                               **kwargs)
+                client = cls._client()
+                if client:
+                    if multi:
+                        result = client.with_options(
+                            write_concern=WriteConcern(w=cls._meta['write_concern'])).update_many(
+                            spec,
+                            document,
+                            upsert=upsert,
+                            **kwargs)
+                    else:
+                        result = client.with_options(
+                            write_concern=WriteConcern(w=cls._meta['write_concern'])).update_one(
+                            spec,
+                            document,
+                            upsert=upsert,
+                            **kwargs)
+                else:
+                    result = cls._pymongo().update(spec,
+                                                   document,
+                                                   upsert=upsert,
+                                                   multi=multi,
+                                                   w=cls._meta['write_concern'],
+                                                   **kwargs)
             return result
         finally:
             cls.cleanup_trace(set_comment)
@@ -1354,11 +1452,18 @@ class Document(BaseDocument):
 
         try:
             with log_slow_event("remove", cls._meta['collection'], spec):
-                result = cls._pymongo().remove(
-                    spec,
-                    w=cls._meta['write_concern'],
-                    **kwargs
-                )
+                client = cls._client()
+                if client:
+                    result = client.with_options(write_concern=WriteConcern(w=cls._meta['write_concern'])).delete_many(
+                        spec,
+                        **kwargs
+                    )
+                else:
+                    result = cls._pymongo().remove(
+                        spec,
+                        w=cls._meta['write_concern'],
+                        **kwargs
+                    )
             return result
         finally:
             cls.cleanup_trace(set_comment)
@@ -1470,12 +1575,20 @@ class Document(BaseDocument):
         set_comment = self.attach_trace(comment, is_scatter_gather)
         try:
             with log_slow_event("update_one", self._meta['collection'], spec):
-                result = self._pymongo().update(query_spec,
-                                                document,
-                                                upsert=upsert,
-                                                multi=False,
-                                                w=self._meta['write_concern'],
-                                                **kwargs)
+                client = self._client()
+                if client:
+                    result = client.with_options(write_concern=WriteConcern(w=self._meta['write_concern'])).update_one(
+                        query_spec,
+                        document,
+                        upsert=upsert,
+                        **kwargs).raw_result
+                else:
+                    result = self._pymongo().update(query_spec,
+                                                    document,
+                                                    upsert=upsert,
+                                                    multi=False,
+                                                    w=self._meta['write_concern'],
+                                                    **kwargs)
 
             # do in-memory updates on the object if the query succeeded
             if result['n'] == 1:

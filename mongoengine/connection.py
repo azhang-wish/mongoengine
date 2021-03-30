@@ -14,6 +14,9 @@ SlaveOkSettings = collections.namedtuple('SlaveOkSettings',
 _connections = {}
 _dbs = {}
 _db_to_conn = {}
+_native_connections = {}
+_native_dbs = {}
+_native_db_to_conn = {}
 _default_db = 'sweeper'
 _slave_ok_settings = {
     False: SlaveOkSettings(ReadPreference.PRIMARY_PREFERRED, [{}]),
@@ -104,6 +107,34 @@ def _get_db(db_name='test', reconnect=False, allow_async=True):
 
     return async if allow_async and async else sync
 
+
+def _native_get_db(db_name='test', reconnect=False, allow_async=True):
+    global _native_dbs, _native_connections, _native_db_to_conn
+
+    if not db_name:
+        db_name = _default_db
+
+    if db_name not in _dbs:
+        if not _native_db_to_conn:
+            conn_name = None
+
+        else:
+            if db_name not in _native_db_to_conn:
+                return None
+
+            conn_name = _native_db_to_conn[db_name]
+
+        if conn_name not in _native_connections:
+            return None
+
+        conn = _native_connections[conn_name]
+        _native_dbs[db_name] = (conn.sync[db_name],
+                         conn.async[db_name] if conn.async else None)
+
+    sync, async = _native_dbs[db_name]
+
+    return async if allow_async and async else sync
+
 def _get_slave_ok(slave_ok):
     return _slave_ok_settings[slave_ok]
 
@@ -115,6 +146,32 @@ def connect_proxy(client_func, conn_name=None, db_names=None):
         for db in db_names:
             _proxy_dbs_to_conn[db] = conn_name
     return _proxy_connections[conn_name]
+
+def connect_native(client, host='localhost', conn_name=None, db_names=None, allow_async=False,
+            slave_ok_settings=None, **kwargs):
+    global _native_connections, _native_db_to_conn, _slave_ok_settings
+
+    # Connect to the database if not already connected
+    if conn_name not in _native_connections:
+        try:
+            async_conn = client(host, **kwargs)
+            sync_conn = async_conn
+
+            # Try connecting
+            async_conn.admin.command("ismaster")
+
+            _native_connections[conn_name] = MongoConnections(sync_conn, async_conn)
+        except Exception as e:
+            raise ConnectionError('Cannot connect to the database: %s' % str(e))
+
+        if db_names:
+            for db in db_names:
+                _native_db_to_conn[db] = conn_name
+
+        if slave_ok_settings:
+            _slave_ok_settings = slave_ok_settings
+
+    return _native_connections[conn_name]
 
 def connect(host='localhost', conn_name=None, db_names=None, allow_async=False,
             slave_ok_settings=None, **kwargs):
