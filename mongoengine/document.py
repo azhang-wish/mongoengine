@@ -826,6 +826,8 @@ class Document(BaseDocument):
                 set_comment = False
 
                 with log_slow_event('find', cls._meta['collection'], spec):
+                    if 'strict' in kwargs:
+                        del kwargs['strict']
                     cur = cls._pymongo(
                         allow_async, read_preference=slave_ok.read_pref, tag_sets=slave_ok.tags
                     ).find(
