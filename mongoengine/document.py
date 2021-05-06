@@ -826,8 +826,10 @@ class Document(BaseDocument):
                 set_comment = False
 
                 with log_slow_event('find', cls._meta['collection'], spec):
+                    # TODO: is strict ever used???
                     if 'strict' in kwargs:
                         del kwargs['strict']
+                    cls._transformKwargs(kwargs)
                     cur = cls._pymongo(
                         allow_async, read_preference=slave_ok.read_pref, tag_sets=slave_ok.tags
                     ).find(
@@ -2018,6 +2020,9 @@ class Document(BaseDocument):
         timeout = kwargs.pop("timeout", None)
         if timeout is not None:
             kwargs["no_cursor_timeout"] = not timeout
+        partial = kwargs.pop("partial", None)
+        if partial is not None:
+            kwargs["allow_partial_results"] = partial
 
 class MapReduceDocument(object):
     """A document returned from a map/reduce query.
