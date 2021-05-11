@@ -771,7 +771,6 @@ class Document(BaseDocument):
             })
             warnings.warn('Avoid noTimeout cursors on primaries')
             del kwargs["timeout"]
-        cls._transformKwargs(kwargs)
 
         is_scatter_gather = cls.is_scatter_gather(spec)
 
@@ -787,6 +786,7 @@ class Document(BaseDocument):
                 'trace': trace
             })
 
+        cls._transform_find_kwargs(**kwargs)
         # transform query
         spec = cls._transform_value(spec, cls)
         spec = cls._update_spec(spec, **kwargs)
@@ -1052,8 +1052,6 @@ class Document(BaseDocument):
         for i in xrange(cls.MAX_AUTO_RECONNECT_TRIES):
             try:
                 read_pref = _get_slave_ok(slave_ok).read_pref
-                if max_time_ms:
-                    kwargs["maxTimeMS"] = max_time_ms
                 cls._transformKwargs(kwargs)
                 return cls._pymongo(read_preference=read_pref).distinct(
                     cls._transform_key(key, cls)[0], spec, **kwargs
@@ -2014,8 +2012,45 @@ class Document(BaseDocument):
         if maxTimeMS:
             kwargs["maxTimeMS"] = maxTimeMS
         timeout = kwargs.pop("timeout", None)
-        if timeout is not None:
+        if timeout:
             kwargs["no_cursor_timeout"] = not timeout
+
+    @staticmethod
+    def _transform_find_kwargs(kwargs):
+        # adaptor to migrate from pymongo 2.8 to 3.11
+        # https://github.com/mongodb/mongo-python-driver/blob/master/doc/migrate-to-pymongo3.rst
+
+        # "spec" renamed "filter"
+        spec = kwargs.pop("spec", None)
+        if spec:
+            kwargs["filter"] = spec
+
+        # "fields" renamed "projection"
+        fields = kwargs.pop("fields", None)
+        if fields:
+            kwargs["projection"] = fields
+
+        # "partial" renamed "allow_partial_results"
+        partial = kwargs.pop("partial", None)
+        if  partial:
+            kwargs["allow_partial_results"] = partial
+
+        #  "timeout" replaced by "no_cursor_timeout" (negtive)
+        timeout = kwargs.pop("timeout", None)
+        if timeout:
+            kwargs["no_cursor_timeout"] = not timeout
+
+        # "network_timeout" is removed, renamed to max_time_ms with pymongo 3.5 or later
+        network_timeout = kwargs.pop("network_timeout")
+        if network_timeout:
+            kwargs["max_time_ms"] = network_timeout
+
+        # TODO: The tailable and await_data options have been replaced by cursor_type
+
+        # The slave_okay, read_preference, tag_sets, and secondary_acceptable_latency_ms options have been removed
+        if kwargs.pop("slave_okay", None) or kwargs.pop("read_preference", None) or kwargs.pop("tag_sets", None) or kwargs.pop("secondary_acceptable_latency_ms", None):
+            # TODO: log as error
+            pass
 
 class MapReduceDocument(object):
     """A document returned from a map/reduce query.
