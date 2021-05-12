@@ -786,7 +786,7 @@ class Document(BaseDocument):
                 'trace': trace
             })
 
-        cls._transform_find_kwargs(**kwargs)
+        cls._transform_find_kwargs(kwargs)
         # transform query
         spec = cls._transform_value(spec, cls)
         spec = cls._update_spec(spec, **kwargs)
