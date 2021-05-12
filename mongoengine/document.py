@@ -2061,8 +2061,8 @@ class Document(BaseDocument):
         #     pass
 
         # In pymongo 3.11, Cursor constructor removes **kwargs and has fixed parameters
-        valid_para = set('filter', 'projection', 'skip', 'limit', 'no_cursor_timeout', 'cursor_type', 'sort', 'allow_partial_results', 'oplog_replay', 'modifiers', 'batch_size', 'manipulate',
-            'collation', 'hint', 'max_scan', 'max_time_ms', 'max', 'min', 'return_key', 'show_record_id', 'snapshot', 'comment', 'session', 'allow_disk_use')
+        valid_para = {'filter', 'projection', 'skip', 'limit', 'no_cursor_timeout', 'cursor_type', 'sort', 'allow_partial_results', 'oplog_replay', 'modifiers', 'batch_size', 'manipulate',
+            'collation', 'hint', 'max_scan', 'max_time_ms', 'max', 'min', 'return_key', 'show_record_id', 'snapshot', 'comment', 'session', 'allow_disk_use'}
         illegal_para = set(kwargs.keys()) - valid_para
         for para in illegal_para:
                 print "removing para: "  + para
