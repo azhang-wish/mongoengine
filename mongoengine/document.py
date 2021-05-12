@@ -2041,7 +2041,7 @@ class Document(BaseDocument):
             kwargs["no_cursor_timeout"] = not timeout
 
         # "network_timeout" is removed, renamed to max_time_ms with pymongo 3.5 or later
-        network_timeout = kwargs.pop("network_timeout")
+        network_timeout = kwargs.pop("network_timeout", None)
         if network_timeout:
             kwargs["max_time_ms"] = network_timeout
 
