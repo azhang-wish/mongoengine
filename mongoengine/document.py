@@ -1258,7 +1258,7 @@ class Document(BaseDocument):
                 read_pref = _get_slave_ok(slave_ok).read_pref
                 if max_time_ms:
                     kwargs["maxTimeMS"] = max_time_ms
-                cls._transformKwargs(kwargs)
+                cls._transform_count_kwargs(kwargs)
                 return cls._pymongo(read_preference=read_pref).count_documents(
                     spec, **kwargs
                 )
@@ -2016,6 +2016,14 @@ class Document(BaseDocument):
             kwargs["no_cursor_timeout"] = not timeout
 
     @staticmethod
+    def _transform_count_kwargs(kwargs):
+        valid_para = { 'session', 'skip', 'limit', 'maxTimeMS', 'collation', 'hint'}
+        illegal_para = set(kwargs.keys()) - valid_para
+        for para in illegal_para:
+                print "removing illegal count para: "  + para
+                kwargs.pop(para)
+
+    @staticmethod
     def _transform_find_kwargs(kwargs):
         # adaptor to migrate from pymongo 2.8 to 3.11
         # https://github.com/mongodb/mongo-python-driver/blob/master/doc/migrate-to-pymongo3.rst
@@ -2047,10 +2055,18 @@ class Document(BaseDocument):
 
         # TODO: The tailable and await_data options have been replaced by cursor_type
 
-        # The slave_okay, read_preference, tag_sets, and secondary_acceptable_latency_ms options have been removed
-        if kwargs.pop("slave_okay", None) or kwargs.pop("read_preference", None) or kwargs.pop("tag_sets", None) or kwargs.pop("secondary_acceptable_latency_ms", None):
-            # TODO: log as error
-            pass
+        # # The slave_okay, read_preference, tag_sets, and secondary_acceptable_latency_ms options have been removed
+        # if kwargs.pop("slave_okay", None) or kwargs.pop("read_preference", None) or kwargs.pop("tag_sets", None) or kwargs.pop("secondary_acceptable_latency_ms", None):
+        #     # TODO: log as error
+        #     pass
+
+        # In pymongo 3.11, Cursor constructor removes **kwargs and has fixed parameters
+        valid_para = set('filter', 'projection', 'skip', 'limit', 'no_cursor_timeout', 'cursor_type', 'sort', 'allow_partial_results', 'oplog_replay', 'modifiers', 'batch_size', 'manipulate',
+            'collation', 'hint', 'max_scan', 'max_time_ms', 'max', 'min', 'return_key', 'show_record_id', 'snapshot', 'comment', 'session', 'allow_disk_use')
+        illegal_para = set(kwargs.keys()) - valid_para
+        for para in illegal_para:
+                print "removing para: "  + para
+                kwargs.pop(para)
 
 class MapReduceDocument(object):
     """A document returned from a map/reduce query.
