@@ -820,18 +820,22 @@ class Document(BaseDocument):
         # in case count passed in instead of limit
         if 'count' in kwargs and limit == 0:
             limit = kwargs['count']
-
+        if limit is None:
+            limit = 0
         for i in xrange(cls.MAX_AUTO_RECONNECT_TRIES):
             try:
                 set_comment = False
 
                 with log_slow_event('find', cls._meta['collection'], spec):
+                    print "xxxxxxxxxxxxxxxxxxxxx yguo: find_raw"
+                    print "xxxxxxxxxxxxxxx yguo limit: " + str(limit)
                     cur = cls._pymongo(
                         allow_async, read_preference=slave_ok.read_pref, tag_sets=slave_ok.tags
                     ).find(
                         spec, fields, skip=skip, limit=limit,
                         sort=sort, **kwargs
                     )
+                    cur = cls._pycursor(cur)
 
                     # max_time_ms <= 0 means its disabled, None means
                     # use default value, otherwise use the value specified
@@ -1086,8 +1090,10 @@ class Document(BaseDocument):
                 yield doc
         else:
             # Motor
-            while cur.fetch_next:
+            print "xxxxxxxxxxxxxxx yguo: motor cur.fetch_next"
+            while True:
                 with log_slow_event('getmore', cls.__name__, None):
+                    print "xxxxxxxxxxxxxxx yguo: motor cur.next_object"
                     doc = cur.next_object()
                     if doc is None:
                         raise StopIteration
