@@ -857,9 +857,8 @@ class Document(BaseDocument):
                     cur.comment(comment)
 
                     if find_one:
-                        cur.limit(-1)
-                        for doc in cls._iterate_cursor(cur):
-                            return doc, set_comment
+                        for result in cur.limit(-1):
+                            return result, set_comment
                         return None, set_comment
                     else:
                         cur.batch_size(batch_size)
@@ -1070,43 +1069,22 @@ class Document(BaseDocument):
         """
             Iterates over a cursor, gracefully handling AutoReconnect exceptions
         """
-        if isinstance(cur, pymongo.cursor.Cursor) or isinstance(cur, pymongo.command_cursor.CommandCursor):
-            while True:
-                with log_slow_event('getmore', cls.__name__, None):
-                    # the StopIteration from .next() will bubble up and kill
-                    # this while loop
-                    doc = cur.next()
+        while True:
+            with log_slow_event('getmore', cls.__name__, None):
+                # the StopIteration from .next() will bubble up and kill
+                # this while loop
+                doc = cur.next()
 
-                    # handle pymongo letting an error document slip through
-                    # (T18431 / CS-22167). convert it into an exception
-                    if '$err' in doc:
-                        err_code = None
-                        if 'code' in doc:
-                            err_code = doc['code']
+                # handle pymongo letting an error document slip through
+                # (T18431 / CS-22167). convert it into an exception
+                if '$err' in doc:
+                    err_code = None
+                    if 'code' in doc:
+                        err_code = doc['code']
 
-                        raise pymongo.errors.OperationFailure(doc['$err'],
-                                                            err_code)
-                yield doc
-        else:
-            # Motor
-            print "xxxxxxxxxxxxxxx yguo: motor cur.fetch_next"
-            while cur.fetch_next():
-                with log_slow_event('getmore', cls.__name__, None):
-                    print "xxxxxxxxxxxxxxx yguo: motor cur.next_object"
-                    doc = cur.next_object()
-                    if doc is None:
-                        raise StopIteration
-
-                    # handle pymongo letting an error document slip through
-                    # (T18431 / CS-22167). convert it into an exception
-                    if '$err' in doc:
-                        err_code = None
-                        if 'code' in doc:
-                            err_code = doc['code']
-
-                        raise pymongo.errors.OperationFailure(doc['$err'],
-                                                            err_code)
-                yield doc
+                    raise pymongo.errors.OperationFailure(doc['$err'],
+                                                        err_code)
+            yield doc
 
     @classmethod
     def find_one(cls, spec, fields=None, skip=0, sort=None, slave_ok=True,
