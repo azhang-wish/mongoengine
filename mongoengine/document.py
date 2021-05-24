@@ -835,7 +835,6 @@ class Document(BaseDocument):
                         spec, fields, skip=skip, limit=limit,
                         sort=sort, **kwargs
                     )
-                    cur = cls._pycursor(cur)
 
                     # max_time_ms <= 0 means its disabled, None means
                     # use default value, otherwise use the value specified
@@ -1091,7 +1090,7 @@ class Document(BaseDocument):
         else:
             # Motor
             print "xxxxxxxxxxxxxxx yguo: motor cur.fetch_next"
-            while True:
+            while cur.fetch_next():
                 with log_slow_event('getmore', cls.__name__, None):
                     print "xxxxxxxxxxxxxxx yguo: motor cur.next_object"
                     doc = cur.next_object()
