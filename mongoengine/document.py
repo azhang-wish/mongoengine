@@ -1021,8 +1021,7 @@ class Document(BaseDocument):
                 return {'result': results}
         cls._transformKwargs(kwargs)
         cur = cls._pymongo(
-                # TODO: yiguo - it's causing stuck in stage, nor sure it causes same issue in prod or not
-                # read_preference=pymongo.read_preferences.ReadPreference.SECONDARY
+                read_preference=pymongo.read_preferences.ReadPreference.SECONDARY_PREFERRED
             ).aggregate(
                 pipeline,
                 **kwargs
