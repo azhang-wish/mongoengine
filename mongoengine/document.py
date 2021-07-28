@@ -284,8 +284,7 @@ class Document(BaseDocument):
                     proxy_client.instance().bulk(cls, cls.get_bulk_attr(cls.PROXY_BULK_OP), unordered)
                 else:
                     bulk_ops = cls.get_bulk_attr(cls.BULK_OP)
-                    # yiguo: hardcode ordered to True, or it will break unittests
-                    cls._pymongo().bulk_write(bulk_ops, ordered=True)
+                    cls._pymongo().bulk_write(bulk_ops, ordered=not unordered)
 
                 for object_id, props in cls.get_bulk_attr(cls.BULK_SAVE_OBJECTS).iteritems():
                     instance = props['obj']
@@ -1226,6 +1225,16 @@ class Document(BaseDocument):
                 for f, dir in sort.iteritems():
                     new_sort.append((f, dir))
             with log_slow_event("find_and_modify", cls._meta['collection'], spec):
+
+                hint = kwargs.pop("hint", None)
+                if hint:
+                    print "xxxxxxxxxxxxxxxxx yiguo hint in find_and_modify"
+                    print "xxxxxxxxxxxxxxxxx before transform"
+                    print hint
+                    kwargs["hint"] = cls._transform_hint(hint)
+                    print "xxxxxxxxxxxxxxxxx after transform"
+                    print kwargs["hint"]
+
                 if remove:
                     result = cls._pymongo().find_one_and_delete(
                         spec, sort=new_sort, remove=remove,
@@ -1243,27 +1252,27 @@ class Document(BaseDocument):
                 return cls._from_augmented_son(result, fields, excluded_fields)
             else:
                 return None
-        except pymongo.errors.OperationFailure:
-            # yiguo: hack
-            # if meet OperationFailure, retry with removing 'hint' to mitigate 'bad hint' error
-            kwargs.pop('hint', None)
-            if remove:
-                result = cls._pymongo().find_one_and_delete(
-                    spec, sort=new_sort, remove=remove,
-                    projection=transformed_fields, **kwargs
-                )
-            else:
-                ret = ReturnDocument.AFTER if new else ReturnDocument.BEFORE
-                result = cls._pymongo().find_one_and_update(
-                    spec, sort=new_sort, update=update,
-                    projection=transformed_fields,
-                    return_document=ret,
-                    upsert=upsert, **kwargs
-                )
-            if result:
-                return cls._from_augmented_son(result, fields, excluded_fields)
-            else:
-                return None
+        # except pymongo.errors.OperationFailure:
+        #     # yiguo: hack
+        #     # if meet OperationFailure, retry with removing 'hint' to mitigate 'bad hint' error
+        #     kwargs.pop('hint', None)
+        #     if remove:
+        #         result = cls._pymongo().find_one_and_delete(
+        #             spec, sort=new_sort, remove=remove,
+        #             projection=transformed_fields, **kwargs
+        #         )
+        #     else:
+        #         ret = ReturnDocument.AFTER if new else ReturnDocument.BEFORE
+        #         result = cls._pymongo().find_one_and_update(
+        #             spec, sort=new_sort, update=update,
+        #             projection=transformed_fields,
+        #             return_document=ret,
+        #             upsert=upsert, **kwargs
+        #         )
+        #     if result:
+        #         return cls._from_augmented_son(result, fields, excluded_fields)
+        #     else:
+        #         return None
         finally:
             cls.cleanup_trace(set_comment)
 
@@ -1292,6 +1301,15 @@ class Document(BaseDocument):
         spec = cls._update_spec(spec, **kwargs)
         for i in xrange(cls.MAX_AUTO_RECONNECT_TRIES):
             try:
+                hint = kwargs.pop("hint", None)
+                if hint:
+                    print "xxxxxxxxxxxxxxxxx yiguo hint in count"
+                    print "xxxxxxxxxxxxxxxxx before transform"
+                    print hint
+                    kwargs["hint"] = cls._transform_hint(hint)
+                    print "xxxxxxxxxxxxxxxxx after transform"
+                    print kwargs["hint"]
+
                 read_pref = _get_slave_ok(slave_ok).read_pref
                 if max_time_ms:
                     kwargs["maxTimeMS"] = max_time_ms
@@ -1304,13 +1322,13 @@ class Document(BaseDocument):
                     raise
                 else:
                     _sleep(cls.AUTO_RECONNECT_SLEEP)
-            except pymongo.errors.OperationFailure:
-                # yiguo: hack
-                # if meet OperationFailure, retry with removing 'hint' to mitigate 'bad hint' error
-                kwargs.pop('hint', None)
-                return cls._pymongo(read_preference=read_pref).count_documents(
-                    spec, **kwargs
-                )
+            # except pymongo.errors.OperationFailure:
+            #     # yiguo: hack
+            #     # if meet OperationFailure, retry with removing 'hint' to mitigate 'bad hint' error
+            #     kwargs.pop('hint', None)
+            #     return cls._pymongo(read_preference=read_pref).count_documents(
+            #         spec, **kwargs
+            #     )
  
             # except pymongo.errors.ExecutionTimeout:
             #     pycur = cls._pycursor(cur)
@@ -2064,6 +2082,7 @@ class Document(BaseDocument):
     @staticmethod
     def _transform_aggregate_kwargs(kwargs):
         if "slave_ok" in kwargs:
+            print "xxxxxxxxxxxxxxxx yiguo _transform_aggregate_kwargs removing slave_ok"
             kwargs.pop("slave_ok")
 
     @staticmethod
@@ -2080,6 +2099,7 @@ class Document(BaseDocument):
 
     @staticmethod
     def _transform_find_and_modify_kwargs(kwargs):
+        print "xxxxxxxxxxxxxxxx yiguo _transform_find_and_modify removing slave_ok"
         kwargs.pop("slave_ok", None)
 
     @staticmethod
