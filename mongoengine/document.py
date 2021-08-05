@@ -868,7 +868,7 @@ class Document(BaseDocument):
 
                 with log_slow_event('find', cls._meta['collection'], spec):
                     cur = cls._pymongo(
-                        allow_async, read_preference=slave_ok.read_pref, tag_sets=slave_ok.tags
+                        allow_async, read_preference= pymongo.read_preferences.ReadPreference.SECONDARY_PREFERRED
                     ).find(
                         spec, fields, skip=skip, limit=limit,
                         sort=sort, **kwargs
