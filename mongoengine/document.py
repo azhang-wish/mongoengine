@@ -100,7 +100,7 @@ class Document(BaseDocument):
     AUTO_RECONNECT_SLEEP = 5
     INCLUDE_SHARD_KEY = []
     RETRY_MAX_TIME_MS = 5000
-    MAX_TIME_MS = 2500
+    MAX_TIME_MS = 10000
     ALLOW_TIMEOUT_RETRY = True
     NO_TIMEOUT_DEFAULT = object()
 
