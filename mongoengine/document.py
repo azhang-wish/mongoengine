@@ -1389,6 +1389,7 @@ class Document(BaseDocument):
 
         try:
             with log_slow_event("update", cls._meta['collection'], spec):
+                cls._transform_update_kwargs(kwargs)
                 if multi:
                     result = cls._pymongo().update_many(spec,
                                                         document,
@@ -2070,6 +2071,11 @@ class Document(BaseDocument):
     def _transform_delete_many_kwargs(kwargs):
         if "multi" in kwargs:
             kwargs.pop("multi")
+
+    @staticmethod
+    def _transform_update_kwargs(kwargs):
+        if "safe" in kwargs:
+            kwargs.pop("safe")
 
     @staticmethod
     def _transform_count_kwargs(kwargs):
