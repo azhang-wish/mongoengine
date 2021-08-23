@@ -13,6 +13,8 @@ def get_version(version_tuple):
     version = '%s.%s' % (version_tuple[0], version_tuple[1])
     if version_tuple[2]:
         version = '%s.%s' % (version, version_tuple[2])
+    if version_tuple[3]:
+        version = '%s+%s' % (version, version_tuple[3])
     return version
 
 # Dirty hack to get version number from monogengine/__init__.py - we can't

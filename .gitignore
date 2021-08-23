@@ -13,3 +13,4 @@ env/
 .project
 .pydevproject
 tests/bugfix.py
+venv/

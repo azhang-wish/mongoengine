@@ -32,6 +32,7 @@ OPS_EMAIL = 'ops@wish.com'
 high_offset_logger = logging.getLogger('sweeper.prod.mongodb_high_offset')
 execution_timeout_logger = logging.getLogger('sweeper.prod.mongodb_execution_timeout')
 notimeout_cursor_logger = logging.getLogger('sweeper.prod.mongodb_notimeout')
+migrate_logger = logging.getLogger('sweeper.prod.mongodb_migrate')
 
 class CLSContext(object):
     pass
@@ -2074,8 +2075,15 @@ class Document(BaseDocument):
 
     @staticmethod
     def _transform_update_kwargs(kwargs):
-        if "safe" in kwargs:
-            kwargs.pop("safe")
+        for one in [_ for _ in kwargs if _ not in (
+                "upsert",
+                "array_filters",
+                "bypass_document_validation",
+                "collation",
+                "session",
+        )]:
+            migrate_logger.warn("Pop bad args for update:{}".format(one))
+            kwargs.pop(one)
 
     @staticmethod
     def _transform_count_kwargs(kwargs):
